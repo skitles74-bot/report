@@ -12,13 +12,3 @@ export interface IssueReport {
   trends: string[];
   generatedAt: string;
 }
-
-export interface Subscription {
-  id: string;
-  email: string;
-  keyword: string;
-  schedule: "daily" | "weekly";
-  active: boolean;
-  last_sent_at: string | null;
-  created_at: string;
-}
