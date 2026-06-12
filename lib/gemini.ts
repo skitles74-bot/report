@@ -2,82 +2,132 @@ import type { IssueReport } from "./types";
 
 const GEMINI_API_BASE =
   "https://generativelanguage.googleapis.com/v1beta/models";
-const GEMINI_MODELS = ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-flash-latest"];
+const GEMINI_MODELS = [
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+  "gemini-flash-latest",
+];
 
-const REPORT_PROMPT = (keyword: string) => `
-당신은 뉴스·이슈 분석 전문가입니다. "${keyword}" 키워드와 관련된 **최근 7일 이내** 주요 이슈를 조사하고 보고서를 작성하세요.
+const RESPONSE_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    keyword: { type: "STRING" },
+    period: { type: "STRING" },
+    summary: { type: "STRING" },
+    issues: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          title: { type: "STRING" },
+          date: { type: "STRING" },
+          description: { type: "STRING" },
+          impact: { type: "STRING" },
+          sources: {
+            type: "ARRAY",
+            items: {
+              type: "OBJECT",
+              properties: {
+                title: { type: "STRING" },
+                url: { type: "STRING" },
+              },
+              required: ["title", "url"],
+            },
+          },
+        },
+        required: ["title", "date", "description", "impact", "sources"],
+      },
+    },
+    trends: { type: "ARRAY", items: { type: "STRING" } },
+    generatedAt: { type: "STRING" },
+  },
+  required: ["keyword", "period", "summary", "issues", "trends", "generatedAt"],
+};
 
-다음 JSON 형식으로만 응답하세요. 다른 텍스트나 마크다운 코드 블록 없이 순수 JSON만 출력하세요:
+const RESEARCH_PROMPT = (keyword: string) => `
+당신은 뉴스·이슈 분석 전문가입니다. "${keyword}" 키워드와 관련된 **최근 7일 이내** 주요 이슈를 웹에서 조사하세요.
 
-{
-  "keyword": "${keyword}",
-  "period": "최근 7일",
-  "summary": "3~5문장의 종합 요약 (한국어)",
-  "issues": [
-    {
-      "title": "이슈 제목",
-      "date": "YYYY-MM-DD",
-      "description": "이슈 상세 설명 (2~3문장, 한국어)",
-      "impact": "high",
-      "sources": [{ "title": "출처 제목", "url": "https://..." }]
-    }
-  ],
-  "trends": ["관련 트렌드 키워드 1", "키워드 2"],
-  "generatedAt": "${new Date().toISOString()}"
-}
+다음 항목을 포함해 한국어로 상세히 작성하세요:
+1. 3~5문장 종합 요약
+2. 주요 이슈 3~7개 (각각: 제목, 날짜 YYYY-MM-DD, 설명 2~3문장, 영향도 high/medium/low, 출처 URL 1~3개)
+3. 관련 트렌드 키워드 3~5개
 
-규칙:
-- issues는 3~7개, 최근 7일 이내 이슈만 포함
-- impact는 high(중대), medium(보통), low(경미)
-- sources는 각 이슈당 1~3개, 실제 URL 포함
-- 한국어로 작성
-- JSON만 출력
+최근 7일 이내 이슈만 포함하고, 출처 URL은 실제 링크를 사용하세요.
 `;
 
-function extractJson(text: string): string {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenced) return fenced[1].trim();
+const STRUCTURE_PROMPT = (keyword: string, research: string) => `
+아래 조사 결과를 보고서 JSON으로 변환하세요.
 
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start !== -1 && end !== -1) return text.slice(start, end + 1);
+조사 결과:
+${research}
 
-  return text.trim();
+규칙:
+- keyword: "${keyword}"
+- period: "최근 7일"
+- generatedAt: "${new Date().toISOString()}"
+- impact는 "high", "medium", "low" 중 하나
+- issues는 3~7개
+- 한국어 유지
+`;
+
+type GeminiResponse = {
+  candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+};
+
+function normalizeImpact(value: string): "high" | "medium" | "low" {
+  const v = value?.toLowerCase?.() ?? "medium";
+  if (v === "high" || v === "medium" || v === "low") return v;
+  return "medium";
 }
 
-function parseReport(raw: string, keyword: string): IssueReport {
-  const parsed = JSON.parse(extractJson(raw)) as IssueReport;
-
-  if (!parsed.summary || !Array.isArray(parsed.issues)) {
+function normalizeReport(raw: IssueReport, keyword: string): IssueReport {
+  if (!raw.summary || !Array.isArray(raw.issues) || raw.issues.length === 0) {
     throw new Error("Invalid report structure");
   }
 
   return {
-    keyword: parsed.keyword || keyword,
+    keyword: raw.keyword || keyword,
     period: "최근 7일",
-    summary: parsed.summary,
-    issues: parsed.issues.map((issue) => ({
-      title: issue.title,
-      date: issue.date,
-      description: issue.description,
-      impact: issue.impact ?? "medium",
-      sources: issue.sources ?? [],
+    summary: String(raw.summary).trim(),
+    issues: raw.issues.map((issue) => ({
+      title: String(issue.title).trim(),
+      date: String(issue.date).trim(),
+      description: String(issue.description).trim(),
+      impact: normalizeImpact(String(issue.impact)),
+      sources: (issue.sources ?? []).map((s) => ({
+        title: String(s.title).trim(),
+        url: String(s.url).trim(),
+      })),
     })),
-    trends: parsed.trends ?? [],
-    generatedAt: parsed.generatedAt ?? new Date().toISOString(),
+    trends: (raw.trends ?? []).map((t) => String(t).trim()),
+    generatedAt: raw.generatedAt ?? new Date().toISOString(),
   };
 }
 
-async function callGemini(apiKey: string, model: string, keyword: string): Promise<string> {
-  const payload = {
-    contents: [{ role: "user", parts: [{ text: REPORT_PROMPT(keyword) }] }],
-    tools: [{ google_search: {} }],
-    generationConfig: {
-      temperature: 0.7,
-      maxOutputTokens: 4096,
-    },
-  };
+function extractJson(text: string): string {
+  const trimmed = text.trim();
+  try {
+    JSON.parse(trimmed);
+    return trimmed;
+  } catch {
+    // continue
+  }
 
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenced) return fenced[1].trim();
+
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start !== -1 && end > start) return trimmed.slice(start, end + 1);
+
+  return trimmed;
+}
+
+async function requestGemini(
+  apiKey: string,
+  model: string,
+  payload: object
+): Promise<string> {
   const response = await fetch(
     `${GEMINI_API_BASE}/${model}:generateContent?key=${apiKey}`,
     {
@@ -90,17 +140,93 @@ async function callGemini(apiKey: string, model: string, keyword: string): Promi
   const responseText = await response.text();
 
   if (!response.ok) {
-    throw new Error(`Gemini API error (${model}): ${response.status} ${responseText}`);
+    throw new Error(
+      `Gemini API error (${model}): ${response.status} ${responseText.slice(0, 300)}`
+    );
   }
 
-  const data = JSON.parse(responseText) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  };
-
+  const data = JSON.parse(responseText) as GeminiResponse;
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error(`Gemini API empty response (${model})`);
+
+  if (!text) {
+    throw new Error(`Gemini API empty response (${model})`);
+  }
 
   return text;
+}
+
+async function researchIssues(
+  apiKey: string,
+  model: string,
+  keyword: string
+): Promise<string> {
+  return requestGemini(apiKey, model, {
+    contents: [{ role: "user", parts: [{ text: RESEARCH_PROMPT(keyword) }] }],
+    tools: [{ google_search: {} }],
+    generationConfig: {
+      temperature: 0.7,
+      maxOutputTokens: 4096,
+    },
+  });
+}
+
+async function structureReport(
+  apiKey: string,
+  model: string,
+  keyword: string,
+  research: string
+): Promise<IssueReport> {
+  const text = await requestGemini(apiKey, model, {
+    contents: [
+      { role: "user", parts: [{ text: STRUCTURE_PROMPT(keyword, research) }] },
+    ],
+    generationConfig: {
+      temperature: 0.3,
+      maxOutputTokens: 4096,
+      responseMimeType: "application/json",
+      responseSchema: RESPONSE_SCHEMA,
+    },
+  });
+
+  const parsed = JSON.parse(extractJson(text)) as IssueReport;
+  return normalizeReport(parsed, keyword);
+}
+
+async function structureReportPlain(
+  apiKey: string,
+  model: string,
+  keyword: string,
+  research: string
+): Promise<IssueReport> {
+  const text = await requestGemini(apiKey, model, {
+    contents: [
+      { role: "user", parts: [{ text: STRUCTURE_PROMPT(keyword, research) }] },
+    ],
+    generationConfig: {
+      temperature: 0.3,
+      maxOutputTokens: 4096,
+      responseMimeType: "application/json",
+    },
+  });
+
+  const parsed = JSON.parse(extractJson(text)) as IssueReport;
+  return normalizeReport(parsed, keyword);
+}
+
+function toUserFacingError(errors: string[]): string {
+  const joined = errors.join(" | ");
+
+  if (/API key not valid|API_KEY_INVALID|401/i.test(joined)) {
+    return "Gemini API 키가 올바르지 않습니다. Google AI Studio에서 API 키를 확인해 주세요.";
+  }
+  if (/quota|RESOURCE_EXHAUSTED|429/i.test(joined)) {
+    return "Gemini API 사용 한도를 초과했습니다. 잠시 후 다시 시도해 주세요.";
+  }
+  if (/no longer available|deprecated|404/i.test(joined)) {
+    return "AI 모델 호출에 실패했습니다. 잠시 후 다시 시도해 주세요.";
+  }
+
+  return "보고서 생성에 실패했습니다. 잠시 후 다시 시도해 주세요.";
 }
 
 export async function generateIssueReport(keyword: string): Promise<IssueReport> {
@@ -108,18 +234,38 @@ export async function generateIssueReport(keyword: string): Promise<IssueReport>
   if (!apiKey) throw new Error("GEMINI_API_KEY is not configured");
 
   const errors: string[] = [];
+  let research: string | null = null;
 
-  for (let attempt = 0; attempt < 2; attempt++) {
-    for (const model of GEMINI_MODELS) {
-      try {
-        const text = await callGemini(apiKey, model, keyword);
-        return parseReport(text, keyword);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        errors.push(`${model}: ${message}`);
-      }
+  for (const model of GEMINI_MODELS) {
+    try {
+      research = await researchIssues(apiKey, model, keyword);
+      break;
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
     }
   }
 
-  throw new Error(errors.join(" | ") || "Failed to generate report");
+  if (!research) {
+    throw new Error(toUserFacingError(errors));
+  }
+
+  const structureErrors: string[] = [];
+
+  for (const model of GEMINI_MODELS) {
+    try {
+      return await structureReport(apiKey, model, keyword, research);
+    } catch (err) {
+      structureErrors.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  for (const model of GEMINI_MODELS) {
+    try {
+      return await structureReportPlain(apiKey, model, keyword, research);
+    } catch (err) {
+      structureErrors.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  throw new Error(toUserFacingError([...errors, ...structureErrors]));
 }
