@@ -1,5 +1,5 @@
 import { buildReportFromResearch, researchKeywordIssues } from "@/lib/gemini";
-import { sendReportEmail } from "@/lib/email";
+import { isEmailEnabled, sendReportEmail, type EmailSendResult } from "@/lib/email";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { reportRequestSchema } from "@/lib/validate";
 
@@ -59,13 +59,17 @@ export async function POST(request: Request) {
         const report = await buildReportFromResearch(keyword, research);
         emit("report", { report });
 
-        emitProgress("sending");
-        const emailResult = await sendReportEmail(email, report);
+        let emailResult: EmailSendResult = { sent: false, skipped: true };
+        if (isEmailEnabled()) {
+          emitProgress("sending");
+          emailResult = await sendReportEmail(email, report);
+        }
 
         emit("done", {
           issueCount: report.issues.length,
           email,
           emailSent: emailResult.sent,
+          emailSkipped: emailResult.skipped ?? false,
           emailWarning: emailResult.warning,
         });
       } catch (err) {

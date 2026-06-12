@@ -8,12 +8,19 @@ let resendClient: Resend | null = null;
 
 export type EmailSendResult = {
   sent: boolean;
+  skipped?: boolean;
   warning?: string;
 };
 
-function getResend(): Resend | null {
+export function isEmailEnabled(): boolean {
+  return !!process.env.RESEND_API_KEY?.trim();
+}
+
+function getResend(): Resend {
   const apiKey = process.env.RESEND_API_KEY?.trim();
-  if (!apiKey) return null;
+  if (!apiKey) {
+    throw new Error("RESEND_API_KEY is not configured");
+  }
 
   if (!resendClient) {
     resendClient = new Resend(apiKey);
@@ -32,10 +39,10 @@ function formatFromAddress(from: string): string {
 
 function toUserFacingEmailError(message: string): string {
   if (/domain|verify|not verified/i.test(message)) {
-    return "발신 도메인이 인증되지 않았습니다. Resend 대시보드에서 도메인을 인증하고 RESEND_FROM_EMAIL을 설정해 주세요.";
+    return "발신 도메인이 인증되지 않았습니다. Resend에서 도메인을 인증하고 RESEND_FROM_EMAIL을 설정해 주세요.";
   }
   if (/only send testing emails to your own/i.test(message)) {
-    return "Resend 테스트 모드에서는 Resend 가입 이메일로만 발송할 수 있습니다. Vercel에 RESEND_FROM_EMAIL(인증 도메인)을 설정해 주세요.";
+    return "Resend 테스트 모드에서는 Resend 가입 이메일로만 발송할 수 있습니다.";
   }
   return message;
 }
@@ -44,20 +51,15 @@ export async function sendReportEmail(
   to: string,
   report: IssueReport
 ): Promise<EmailSendResult> {
-  const resend = getResend();
-  if (!resend) {
-    return {
-      sent: false,
-      warning:
-        "RESEND_API_KEY가 설정되지 않아 이메일을 발송하지 않았습니다. Vercel 환경 변수를 확인해 주세요.",
-    };
+  if (!isEmailEnabled()) {
+    return { sent: false, skipped: true };
   }
 
   const from = formatFromAddress(getFromEmail());
   const html = renderReportHtml(report);
   const subject = getReportSubject(report);
 
-  const { error } = await resend.emails.send({
+  const { error } = await getResend().emails.send({
     from,
     to,
     subject,

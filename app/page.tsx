@@ -138,6 +138,11 @@ export default function HomePage() {
                   "success",
                   `보고서가 생성되어 ${payload.email}(으)로 발송되었습니다. (이슈 ${payload.issueCount}건)`
                 );
+              } else if (payload.emailSkipped) {
+                showToast(
+                  "success",
+                  `보고서가 생성되었습니다. (이슈 ${payload.issueCount}건) 아래에서 확인하세요.`
+                );
               } else if (payload.emailWarning) {
                 showToast(
                   "error",
@@ -282,6 +287,7 @@ export default function HomePage() {
                 onChange={(e) => setEmail(e.target.value)}
                 required
               />
+              <p className="hint">이메일 발송은 Vercel에 RESEND_API_KEY 설정 시에만 동작합니다. 미설정 시 화면에서만 확인할 수 있습니다.</p>
             </div>
 
             {loading && (
