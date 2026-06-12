@@ -60,11 +60,13 @@ export async function POST(request: Request) {
         emit("report", { report });
 
         emitProgress("sending");
-        await sendReportEmail(email, report);
+        const emailResult = await sendReportEmail(email, report);
 
         emit("done", {
           issueCount: report.issues.length,
           email,
+          emailSent: emailResult.sent,
+          emailWarning: emailResult.warning,
         });
       } catch (err) {
         const message =

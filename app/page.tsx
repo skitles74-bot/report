@@ -133,10 +133,22 @@ export default function HomePage() {
             } else if (event === "done") {
               setCompletedSteps([...STEP_ORDER]);
               setCurrentStep(null);
-              showToast(
-                "success",
-                `보고서가 생성되어 ${payload.email}(으)로 발송되었습니다. (이슈 ${payload.issueCount}건)`
-              );
+              if (payload.emailSent) {
+                showToast(
+                  "success",
+                  `보고서가 생성되어 ${payload.email}(으)로 발송되었습니다. (이슈 ${payload.issueCount}건)`
+                );
+              } else if (payload.emailWarning) {
+                showToast(
+                  "error",
+                  `보고서는 생성되었습니다 (이슈 ${payload.issueCount}건). 이메일 발송 실패: ${payload.emailWarning}`
+                );
+              } else {
+                showToast(
+                  "success",
+                  `보고서가 생성되었습니다. (이슈 ${payload.issueCount}건)`
+                );
+              }
             } else if (event === "error") {
               setCurrentStep(null);
               showToast("error", (payload.message as string) ?? "보고서 발송에 실패했습니다.");

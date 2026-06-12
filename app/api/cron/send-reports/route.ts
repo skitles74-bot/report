@@ -27,7 +27,10 @@ export async function GET(request: Request) {
     for (const sub of due) {
       try {
         const report = await generateIssueReport(sub.keyword);
-        await sendReportEmail(sub.email, report);
+        const emailResult = await sendReportEmail(sub.email, report);
+        if (!emailResult.sent) {
+          throw new Error(emailResult.warning ?? "Email send failed");
+        }
         await updateLastSentAt(sub.id);
         results.push({ id: sub.id, status: "sent" });
       } catch (err) {
