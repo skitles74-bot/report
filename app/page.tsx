@@ -1,6 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
+import ReportResult from "./components/ReportResult";
+import type { IssueReport } from "@/lib/types";
 
 type Tab = "instant" | "subscribe";
 type Toast = { type: "success" | "error"; message: string };
@@ -37,6 +39,7 @@ export default function HomePage() {
   const [currentStep, setCurrentStep] = useState<ReportStep | null>(null);
   const [completedSteps, setCompletedSteps] = useState<ReportStep[]>([]);
   const [stepMessage, setStepMessage] = useState("");
+  const [reportResult, setReportResult] = useState<IssueReport | null>(null);
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function clearSuccessTimer() {
@@ -84,6 +87,7 @@ export default function HomePage() {
     e.preventDefault();
     setLoading(true);
     setToast(null);
+    setReportResult(null);
     resetProgress();
 
     try {
@@ -116,6 +120,8 @@ export default function HomePage() {
 
             if (event === "progress") {
               handleProgress(payload.step as ReportStep, payload.message as string);
+            } else if (event === "report") {
+              setReportResult(payload.report as IssueReport);
             } else if (event === "done") {
               setCompletedSteps([...STEP_ORDER]);
               setCurrentStep(null);
@@ -351,6 +357,12 @@ export default function HomePage() {
           </div>
         )}
       </div>
+
+      {tab === "instant" && reportResult && (
+        <div className="card report-card">
+          <ReportResult report={reportResult} />
+        </div>
+      )}
 
       <footer className="footer">
         Powered by Gemini AI · Resend

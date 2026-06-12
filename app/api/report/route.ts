@@ -55,6 +55,8 @@ export async function POST(request: Request) {
         emitProgress("generating");
         const report = await generateIssueReport(keyword);
 
+        emit("report", { report });
+
         emitProgress("sending");
         await sendReportEmail(email, report);
 
