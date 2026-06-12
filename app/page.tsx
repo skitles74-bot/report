@@ -1,9 +1,31 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 type Tab = "instant" | "subscribe";
-type Toast = { type: "success" | "error"; message: string } | null;
+type Toast = { type: "success" | "error"; message: string };
+type ReportStep = "validating" | "searching" | "generating" | "sending";
+
+const REPORT_STEPS: Array<{ id: ReportStep; label: string }> = [
+  { id: "validating", label: "입력 확인" },
+  { id: "searching", label: "이슈 검색" },
+  { id: "generating", label: "보고서 작성" },
+  { id: "sending", label: "이메일 발송" },
+];
+
+const STEP_ORDER: ReportStep[] = ["validating", "searching", "generating", "sending"];
+
+function parseSseChunk(chunk: string): Array<{ event: string; data: string }> {
+  return chunk
+    .split("\n\n")
+    .filter(Boolean)
+    .map((block) => {
+      const lines = block.split("\n");
+      const event = lines.find((l) => l.startsWith("event: "))?.slice(7) ?? "message";
+      const data = lines.find((l) => l.startsWith("data: "))?.slice(6) ?? "{}";
+      return { event, data };
+    });
+}
 
 export default function HomePage() {
   const [tab, setTab] = useState<Tab>("instant");
@@ -11,17 +33,58 @@ export default function HomePage() {
   const [email, setEmail] = useState("");
   const [schedule, setSchedule] = useState<"daily" | "weekly">("daily");
   const [loading, setLoading] = useState(false);
-  const [toast, setToast] = useState<Toast>(null);
+  const [toast, setToast] = useState<Toast | null>(null);
+  const [currentStep, setCurrentStep] = useState<ReportStep | null>(null);
+  const [completedSteps, setCompletedSteps] = useState<ReportStep[]>([]);
+  const [stepMessage, setStepMessage] = useState("");
+  const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function clearSuccessTimer() {
+    if (successTimerRef.current) {
+      clearTimeout(successTimerRef.current);
+      successTimerRef.current = null;
+    }
+  }
 
   function showToast(type: "success" | "error", message: string) {
+    clearSuccessTimer();
     setToast({ type, message });
-    setTimeout(() => setToast(null), 5000);
+
+    if (type === "success") {
+      successTimerRef.current = setTimeout(() => {
+        setToast((prev) => (prev?.type === "success" ? null : prev));
+      }, 5000);
+    }
+  }
+
+  function dismissToast() {
+    clearSuccessTimer();
+    setToast(null);
+  }
+
+  function resetProgress() {
+    setCurrentStep(null);
+    setCompletedSteps([]);
+    setStepMessage("");
+  }
+
+  function handleProgress(step: ReportStep, message: string) {
+    setCurrentStep((prev) => {
+      if (prev && STEP_ORDER.indexOf(step) > STEP_ORDER.indexOf(prev)) {
+        setCompletedSteps((completed) =>
+          completed.includes(prev) ? completed : [...completed, prev]
+        );
+      }
+      return step;
+    });
+    setStepMessage(message);
   }
 
   async function handleInstantSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setToast(null);
+    resetProgress();
 
     try {
       const res = await fetch("/api/report", {
@@ -29,18 +92,46 @@ export default function HomePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ keyword, email }),
       });
-      const data = await res.json();
 
-      if (!res.ok) {
-        showToast("error", data.error ?? "보고서 발송에 실패했습니다.");
+      if (!res.body) {
+        showToast("error", "서버 응답을 받지 못했습니다.");
         return;
       }
 
-      showToast(
-        "success",
-        `보고서가 생성되어 ${email}(으)로 발송되었습니다. (이슈 ${data.issueCount}건)`
-      );
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? "";
+
+        for (const part of parts) {
+          for (const { event, data } of parseSseChunk(part)) {
+            const payload = JSON.parse(data) as Record<string, unknown>;
+
+            if (event === "progress") {
+              handleProgress(payload.step as ReportStep, payload.message as string);
+            } else if (event === "done") {
+              setCompletedSteps([...STEP_ORDER]);
+              setCurrentStep(null);
+              showToast(
+                "success",
+                `보고서가 생성되어 ${payload.email}(으)로 발송되었습니다. (이슈 ${payload.issueCount}건)`
+              );
+            } else if (event === "error") {
+              setCurrentStep(null);
+              showToast("error", (payload.message as string) ?? "보고서 발송에 실패했습니다.");
+            }
+          }
+        }
+      }
     } catch {
+      setCurrentStep(null);
       showToast("error", "네트워크 오류가 발생했습니다. 다시 시도해 주세요.");
     } finally {
       setLoading(false);
@@ -51,6 +142,7 @@ export default function HomePage() {
     e.preventDefault();
     setLoading(true);
     setToast(null);
+    resetProgress();
 
     try {
       const res = await fetch("/api/subscribe", {
@@ -107,6 +199,12 @@ export default function HomePage() {
     }
   }
 
+  function getStepStatus(stepId: ReportStep): "pending" | "active" | "done" {
+    if (completedSteps.includes(stepId)) return "done";
+    if (currentStep === stepId) return "active";
+    return "pending";
+  }
+
   return (
     <div className="app">
       <header className="header">
@@ -120,14 +218,14 @@ export default function HomePage() {
         <button
           type="button"
           className={`tab ${tab === "instant" ? "active" : ""}`}
-          onClick={() => { setTab("instant"); setToast(null); }}
+          onClick={() => setTab("instant")}
         >
           즉시 발송
         </button>
         <button
           type="button"
           className={`tab ${tab === "subscribe" ? "active" : ""}`}
-          onClick={() => { setTab("subscribe"); setToast(null); }}
+          onClick={() => setTab("subscribe")}
         >
           정기 구독
         </button>
@@ -159,11 +257,34 @@ export default function HomePage() {
                 required
               />
             </div>
+
+            {loading && (
+              <div className="progress-panel" aria-live="polite">
+                <p className="progress-title">보고서 생성 중</p>
+                <ol className="progress-steps">
+                  {REPORT_STEPS.map((step) => {
+                    const status = getStepStatus(step.id);
+                    return (
+                      <li key={step.id} className={`progress-step progress-step--${status}`}>
+                        <span className="progress-step-icon">
+                          {status === "done" ? "✓" : status === "active" ? "●" : "○"}
+                        </span>
+                        <span className="progress-step-label">{step.label}</span>
+                      </li>
+                    );
+                  })}
+                </ol>
+                {stepMessage && <p className="progress-message">{stepMessage}</p>}
+              </div>
+            )}
+
             <button type="submit" className="btn btn-primary" disabled={loading}>
               {loading && <span className="spinner" />}
-              {loading ? "보고서 생성 중..." : "보고서 생성 및 발송"}
+              {loading ? "처리 중..." : "보고서 생성 및 발송"}
             </button>
-            <p className="hint">AI가 웹 검색 후 보고서를 생성하므로 30초~1분 정도 소요될 수 있습니다.</p>
+            {!loading && (
+              <p className="hint">AI가 웹 검색 후 보고서를 생성하므로 30초~1분 정도 소요될 수 있습니다.</p>
+            )}
           </form>
         ) : (
           <form onSubmit={handleSubscribe}>
@@ -217,7 +338,17 @@ export default function HomePage() {
         )}
 
         {toast && (
-          <div className={`toast ${toast.type}`}>{toast.message}</div>
+          <div className={`toast ${toast.type}`} role="alert">
+            <span className="toast-message">{toast.message}</span>
+            <button
+              type="button"
+              className="toast-dismiss"
+              onClick={dismissToast}
+              aria-label="닫기"
+            >
+              ×
+            </button>
+          </div>
         )}
       </div>
 
