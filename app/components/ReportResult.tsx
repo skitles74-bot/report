@@ -18,7 +18,7 @@ export default function ReportResult({ report }: ReportResultProps) {
   return (
     <div className="report-result">
       <div className="report-header">
-        <h2 className="report-title">검색 결과</h2>
+        <h2 className="report-title">이슈 보고서</h2>
         <p className="report-keyword">&quot;{report.keyword}&quot;</p>
         <p className="report-meta">
           {report.period} · {generatedDate} 생성 · 이슈 {report.issues.length}건

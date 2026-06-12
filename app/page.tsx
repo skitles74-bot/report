@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import ReportResult from "./components/ReportResult";
+import SearchResult from "./components/SearchResult";
 import type { IssueReport } from "@/lib/types";
 
 type Tab = "instant" | "subscribe";
@@ -40,6 +41,7 @@ export default function HomePage() {
   const [completedSteps, setCompletedSteps] = useState<ReportStep[]>([]);
   const [stepMessage, setStepMessage] = useState("");
   const [reportResult, setReportResult] = useState<IssueReport | null>(null);
+  const [searchResult, setSearchResult] = useState<{ keyword: string; content: string } | null>(null);
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function clearSuccessTimer() {
@@ -88,6 +90,7 @@ export default function HomePage() {
     setLoading(true);
     setToast(null);
     setReportResult(null);
+    setSearchResult(null);
     resetProgress();
 
     try {
@@ -120,6 +123,11 @@ export default function HomePage() {
 
             if (event === "progress") {
               handleProgress(payload.step as ReportStep, payload.message as string);
+            } else if (event === "search") {
+              setSearchResult({
+                keyword: payload.keyword as string,
+                content: payload.content as string,
+              });
             } else if (event === "report") {
               setReportResult(payload.report as IssueReport);
             } else if (event === "done") {
@@ -357,6 +365,16 @@ export default function HomePage() {
           </div>
         )}
       </div>
+
+      {tab === "instant" && searchResult && (
+        <div className="card report-card">
+          <SearchResult
+            keyword={searchResult.keyword}
+            content={searchResult.content}
+            isGeneratingReport={loading && !reportResult}
+          />
+        </div>
+      )}
 
       {tab === "instant" && reportResult && (
         <div className="card report-card">

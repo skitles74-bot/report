@@ -1,4 +1,4 @@
-import { generateIssueReport } from "@/lib/gemini";
+import { buildReportFromResearch, researchKeywordIssues } from "@/lib/gemini";
 import { sendReportEmail } from "@/lib/email";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { reportRequestSchema } from "@/lib/validate";
@@ -52,9 +52,11 @@ export async function POST(request: Request) {
         const { keyword, email } = parsed.data;
 
         emitProgress("searching");
-        emitProgress("generating");
-        const report = await generateIssueReport(keyword);
+        const research = await researchKeywordIssues(keyword);
+        emit("search", { keyword, content: research });
 
+        emitProgress("generating");
+        const report = await buildReportFromResearch(keyword, research);
         emit("report", { report });
 
         emitProgress("sending");

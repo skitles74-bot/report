@@ -229,25 +229,29 @@ function toUserFacingError(errors: string[]): string {
   return "보고서 생성에 실패했습니다. 잠시 후 다시 시도해 주세요.";
 }
 
-export async function generateIssueReport(keyword: string): Promise<IssueReport> {
+async function researchKeywordIssues(keyword: string): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY is not configured");
 
   const errors: string[] = [];
-  let research: string | null = null;
 
   for (const model of GEMINI_MODELS) {
     try {
-      research = await researchIssues(apiKey, model, keyword);
-      break;
+      return await researchIssues(apiKey, model, keyword);
     } catch (err) {
       errors.push(err instanceof Error ? err.message : String(err));
     }
   }
 
-  if (!research) {
-    throw new Error(toUserFacingError(errors));
-  }
+  throw new Error(toUserFacingError(errors));
+}
+
+async function buildReportFromResearch(
+  keyword: string,
+  research: string
+): Promise<IssueReport> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("GEMINI_API_KEY is not configured");
 
   const structureErrors: string[] = [];
 
@@ -267,5 +271,12 @@ export async function generateIssueReport(keyword: string): Promise<IssueReport>
     }
   }
 
-  throw new Error(toUserFacingError([...errors, ...structureErrors]));
+  throw new Error(toUserFacingError(structureErrors));
+}
+
+export { researchKeywordIssues, buildReportFromResearch };
+
+export async function generateIssueReport(keyword: string): Promise<IssueReport> {
+  const research = await researchKeywordIssues(keyword);
+  return buildReportFromResearch(keyword, research);
 }
